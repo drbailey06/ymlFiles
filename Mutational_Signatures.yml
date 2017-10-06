@@ -1,0 +1,146 @@
+Mutational_Signatures:
+  Version_info:  <#-- Version 1.0.0 August 2017  dialog-->  /* Written by Shannon T. Bailey */
+  dialog_group: Subjects
+  image_color: Brown
+  list_description: Evaluate variant expression in RNA
+  dialog_group: cancer
+  description: |
+   <div style="margin:10px,10px,10px,0px;"><font face="Arial, sans-serif" size = "4"><p style="margin:0px;padding:0px;"><font size="4.5">TThis Report Builder determines the mutational signature profile for a cohort individual samples.</font><br>
+   <br><font size="4.5">Version 1.0.0, May 15, 2017</font></p>
+   <a style="color:#0b68b2;"><b>Parameters:</b></a><br><br><table style="border-spacing:10"><tr><td><span style="color:#00aeef">gorGrid </span> </td><td> Select subjects of interest from the drop-down menu, which lists open gor-formatted grids containing the columns chrom, pos, ref, alt, and PN.</td></tr>
+   <tr><td><span style="color:#00aeef">Analysis_type </span> </td><td> Select the type of analysis you would like to perform. Cohort analysis provides a single signature for all samples selected in the gorGrid drop-down list. Individual provides a signature for each PN.</td></tr> 
+   <a style="color:#0b68b2;"><b><font size="4">Optional parameters:</font></b></a><table style="border-spacing:10"> <tr><td><span style="color:#00aeef">variantScope </span></td><td> Filter to only include exonic and nearby variants or report all variants.</td></tr> <tr><td><span style="color:#00aeef">geneOverlapFuzzfactor </span></td><td> Sets the cutoff distance for 'exonic' variants (used to include splice site variants).</td></tr> <tr><td><span style="color:#00aeef">candidategenereportgrid </span></td><td> Sets a perspective that is limited to genes in the candidate gene table or grid.</td></tr> <tr><td><span style="color:#00aeef">candidategenereportfile </span></td><td> Sets a perspective that is limited to genes in the candidate gene file.</td></tr> <tr><td><span style="color:#00aeef">excludeRepeatRegions </span></td><td> Exclude variants in repetitive regions.  These regions tend to have poor alignment and spurious variants.</td></tr> <tr><td><span style="color:#00aeef">repeatOverlapFuzzfactor </span></td><td> Variants close to the defined repetitive element boundaries are often spurious as the element edges are not well defined.</td></tr> </table>
+   <a style="color:#0b68b2;"><b>Drill in Reports:</b></a><br><br>
+   <a style="color:#00aeef;"><b>Pan-Cancer signif. mutated genes (SMGs) / Separate-tumor SMGs</b></a><br>
+   TCGA significantly mutated genes (SMGs) from <a href="http://www.nature.com/nature/journal/v502/n7471/full/nature12634.html">Kandoth et. al., 2013</a>.  The values are the percentage of samples mutated in individual tumour types (SEP) and Pan-Cancer (PAN).<br>
+   <a style="color:#00aeef;"><b>TCGA tumor signatures</b></a><br>
+   Oncogenic signatures from <a href="http://www.nature.com/ng/journal/v45/n10/full/ng.2762.html">Ciriello et. al., 2013</a>. 17 recurrent mutation (M class) signature subclasses (M1–M17) and 14 copy number alteration (C class) signature subclasses (C1–C14).  The class numbers give the percent of tumors in the subclass that have the TCGA event (mutation, CNV, or methylation).  Cancer reference file class_case lists the samples in the subclass and case_sample_type shows the type of cancer.<br>
+   <a style="color:#00aeef;"><b>NCI 60 cell lines</b></a><br>
+   NCI 60 cell line exome variant calls from <a href="http://cancerres.aacrjournals.org/content/73/14/4372.long">Abaan et. al., 2013</a>.  Values give the variant read depth.
+ 
+   </div>
+       
+
+    </font>
+  query: |
+    <#setting locale="en_US">
+    
+    
+    /*  This creates a starting table to work with. Without this, some of the individual samples show only a subset of the 96 contexts. */
+    create #sigs# = nor [gorgrid: '${gorGrid.val}']  
+    <#if Analysis_type.val == "Cohort">
+    | select 1-4 
+    | top 1  
+    <#else>
+    | select 1-4,PN 
+    | granno -sc PN -lis -len 10000000 
+    | top 1 
+    | hide PN 
+    | replace lis_PN LISTDIST(lis_PN) 
+    </#if>    
+    | calc refSeq "ACA,ACC,ACG,ACT,ATA,ATC,ATG,ATT,CCA,CCC,CCG,CCT,CTA,CTC,CTG,CTT,GCA,GCC,GCG,GCT,GTA,GTC,GTG,GTT,TCA,TCC,TCG,TCT,TTA,TTC,TTG,TTT"  
+    | split refSeq  
+    | calc Callx "A,G,T,C"  
+    | split Callx  
+    | calc Type refSeq  
+    | sed "^.|.$" "" -c Type
+    | where Callx <> Type
+    | replace Type Type+'>'+Callx  
+    | select 5- 
+    <#if Analysis_type.val == "Individual">
+    | replace lis_PN LISTDIST(lis_PN) 
+    | split lis_PN 
+    | distinct 
+    </#if>    
+    | calc Percent float(0) 
+    | rename Callx Call 
+    <#if Analysis_type.val == "Individual">
+    | rename lis_PN PN 
+    | columnsort refSeq,Type,Percent,Call,PN
+    <#else>
+    | columnsort refSeq,Type,Percent,Call
+    </#if>; 
+    
+    
+    create ##signatures## = pgor [gorgrid: '${gorGrid.val}']   
+
+    <#if Analysis_type.val == "Cohort">
+    | select 1-4 
+    <#else>
+    | select 1-5     
+    </#if>
+    | seq -l 1  
+    | where len(reference) =1 and len(call) =1  
+    | where containsany(reference,'C','T')  
+    | replace refSeq UPPER(refSeq)  
+    | calc mutation refSeq  
+    | sed '\(|\)' '' -c refSeq  
+    | sed '\(|\)' ',' -c mutation  
+    | colsplit mutation 3 mut  
+    | replace mut_2 call  
+    <#if Analysis_type.val == "Cohort">
+    | select 1-6 
+    <#else>
+    | select 1-7     
+    </#if>
+    | columnsort chrom,pos,refseq,call  
+    | hide mutation,reference;       
+
+    create #overall_counts# = nor [##signatures##] 
+    <#if Analysis_type.val == "Cohort">
+    | granno genome -count  
+    | select refSeq,call,allCount 
+    <#else>
+    | granno genome -gc PN -count  
+    | select PN,allCount
+    </#if> 
+    | distinct;
+
+    <#if Analysis_type.val == "Cohort">
+    nor [#sigs#]
+    | map -c refSeq,Type -h -m '' <(nor [##signatures##]  
+    | group genome -gc refSeq,call -count
+    | map -c refSeq,call -h [#overall_counts#]  
+    | calc percent FORM(float(allcount/allcountx*100),1,1) 
+    | select refSeq,Call,percent
+    | calc ref refSeq 
+    | sed "^.{1}" "" -c ref 
+    | sed "{1}.$" "" -c ref 
+    | calc Type ref+">"+Call 
+    | hide ref
+    | columnsort refSeq,Type,percent) 
+    | replace Percent if(percentx<>'',percentx,Percent)
+    | hide percentx,callx
+    <#else>
+    nor [##signatures##] 
+    | group genome -gc refSeq,call,PN -count 
+    | map -c PN -h [#overall_counts#] 
+    | calc percent FORM(float(allcount/allcountx*100),1,1) 
+    | select refSeq,Call,percent,PN 
+    | calc ref refSeq 
+    | sed "^.{1}" "" -c ref 
+    | sed "{1}.$" "" -c ref 
+    | calc Type ref+">"+Call 
+    | hide ref 
+    | columnsort refSeq,Type,percent
+    | merge [#sigs#]
+    | group -gc refSeq,Type,Call,PN -fc percent -lis
+    | sed ",0.0|0.0," "" -c lis_percent
+    | rename lis_percent Percent
+    </#if> 
+    
+
+  arguments:
+   - name: gorGrid
+     type: grid
+     default: ""
+     optional: yes
+     required_columns: ["Gene_Symbol"]
+     description: "Selects the gor grid containing variants for which you would like to determine the mutational signature(s) for."
+   - name: Analysis_type
+     optional: yes
+     type: string
+     default: "Cohort"
+     values: ["Cohort","Individual"]
+     description: "Selects the type of analysis you would like to perform: <br><br><b> Cohort </b> analyzes every sample in the grid selected with the gorGrid selector. <br><br><b>Individual </b> analyzes every sample individually providing a signature for each."
+   

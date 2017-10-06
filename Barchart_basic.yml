@@ -1,0 +1,135 @@
+Barchart_VEP_summary:
+  list_description: Google_charts basic example.
+  image_color: red
+  description: |
+    <div style="margin:10px;"><font face="Arial, sans-serif" size = "4">
+    <font size="4.5">For the entered samples, the VEP max_impact totals of Filter=PASS variants is summarized and charted as a stacked bar chart using Google Charts.  Simple charting example.
+    <br>
+    <a style="color:#0b68b2;"><b>Required parameters:</b></a>
+    <table style="border-spacing:10">
+    <tr><td><span style="color:00aeef">SUBJECTs</span> </td><td>Select PNs.</td></tr>
+    </table>
+    </font></div>
+
+  chartColumns: PN,HIGH,MODERATE,LOW,LOWEST 
+  chart: |
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+      <title> Example </title>
+      <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+      <script type="text/javascript">
+       try {
+          window.addEventListener("message", receiveMessage, false);
+
+          window.onresize = function() {
+            var cd = document.getElementById("chart_div");
+            cd.width = window.innerWidth;
+            cd.height = window.innerHeight;
+            cd.style.width = window.innerWidth+"px";
+            cd.style.height = window.innerHeight+"px";
+            drawChart();
+          }
+
+          google.charts.load('current', {'packages':['corechart','bar']});
+          google.charts.setOnLoadCallback(drawChart);
+
+          var origin;
+          var source;
+          var dataTable = null;
+          var chart = null;
+          var dict = null;
+          function receiveMessage (event) {
+            origin = event.origin || event.originalEvent.origin;
+            source = event.source;
+            var cd = document.getElementById("chart_div");
+            cd.style.width = window.innerWidth+"px";
+            cd.style.height = window.innerHeight+"px";
+
+            //The data table that is passed into the HTML page.
+            dict = event.data;
+            if( !dict ) {
+              //A selection from a table tab is passed in.  Currently does not work.
+              chart.setSelection([{"row": window.selidx}]);
+            } else {
+              drawChart();
+            }
+          }
+
+          function drawChart() {
+
+            var options = {
+              titlePosition: 'none',
+              hAxis: {
+                title: 'PN',
+                //maxTextLines: 40,
+                textStyle: { 
+                  fontSize: 11,
+                },
+              },
+              vAxis: {
+                title: 'PN',
+              },
+              colors: ['#0166B3', '#009148', '#F13E2C', '#E8C403'],
+              //legend: { position: "none" },
+              chartArea: { left: '10%', top: '2%', width: "75%", height: "73%" },
+              bar: { groupWidth: '61.8%' },
+              isStacked: true,
+            };
+
+
+            if( dict != null ) dataTable = google.visualization.arrayToDataTable( dict );
+
+            chart = new google.visualization.ColumnChart(document.getElementById('chart_div'));
+
+            chart.draw(dataTable, options);
+          }
+ 
+          function selectHandler() {
+            var selectedItems = chart.getSelection();
+            if (selectedItems) {
+              var selectionIndex = [];
+              for( var i in selectedItems ) {
+                var selectedItem = selectedItems[i];
+                selectionIndex[i] = selectedItem.row;
+              }
+              SM.rowByName( selectionIndex );
+            }
+          }
+          window.contextMenu = {};
+          window.contextMenu.saveImage = function() {
+            window.open(chart.getImageURI());
+          }
+
+        } catch( e ) {
+          alert(e.message);
+        }
+      </script>
+      </head>
+      <body style="overflow:hidden" style="padding: 0px; margin: 0px;">
+          <div id="title" style="width: 100%; padding: 0; margin: 0; font-size: 1.25em; font-family: Arial; font-weight: bold; text-align: center; "></div>
+          <div id="chart_div" style="width: 100%; height: 100%; padding: 0; margin: 0;"></div>
+          <div id="table_div" style="width: 100%; height: 100%; padding: 0; margin: 0;"></div>
+      </body>
+      </html>
+  query: |
+    <#assign renameval = "#"+"{"+"1"+"}" >
+
+    nor <(gor #wesvars# -s PN <#if SUBJECTS.val!="NONE"> -f ${SUBJECTS.val} -fs </#if> 
+    | select 1-4,PN
+    | varjoin #VEP# | select 1-2,PN,max_impact
+    | group genome -gc PN,max_impact -count)
+    | select PN,max_impact,allCount
+    | pivot max_impact -v 'HIGH','MODERATE','LOW','LOWEST' -gc PN -e 0
+    | rename (.*)_(.*) ${renameval}
+
+  arguments:
+   - name: SUBJECTS
+     optional: yes
+     type: pn_lists_entries
+     values_path: SubjectReports/All.rep.link
+     format:
+       keywords: "%s"
+       values: "%s"
+       empty: "NONE"
+

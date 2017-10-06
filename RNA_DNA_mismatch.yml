@@ -1,0 +1,112 @@
+RNA_DNA_Concordance:
+  Version_info:  <#-- Version 1.0.0 July 2017  dialog-->  /* Written by Shannon T. Bailey */
+  dialog_group: Subjects
+  image_color: green
+  list_description: Evaluate variant expression in RNA
+  description: |
+   <div style="margin:10px,10px,10px,0px;"><font face="Arial, sans-serif" size = "4"><p style="margin:0px;padding:0px;"><font size="4.5">This Report Builder shows variation copy number variation (CNV) calls from the CNVkit caller.</font><br>
+   <br><font size="4.5">Version 1.0.0, May 15, 2017</font></p>
+   <a style="color:#0b68b2;"><b>Parameters:</b></a><br><br><table style="border-spacing:10"><tr><td><span style="color:#00aeef">SUBJECTS </span> </td><td> Select subjects of interest by clicking on the box. Click each sample you wish to examine, and then select ‘Apply.’ You may select multiple samples at once by highlighting the samples you want to analyze, right clicking, and then selecting ‘Set Selected.’ To analyze all samples, select all samples, right click, select ‘Set Selected,’ and then select ‘Apply.’ You may also select all samples by making no selection</td></tr>
+   <tr><td><span style="color:#00aeef">SUBJECTS_grid </span> </td><td> Select subjects of interest using an open grid. The grid should contain a ‘PN’ column containing the samples of interest. Use the drop-down menu to select the grid including the samples you would like to examine.</td></tr> 
+   </div>
+   </font>
+  query: |
+    <#setting locale="en_US">
+    
+    <#assign ren = "#"+"{"+"1}" >
+    def ##rna_bam_source## = source/bam/cancer;    
+    
+    create #samples# = nor source/bam/rna_bam_tumor.gord -asdict 
+    |  calc Subjectid col2 
+    | sed "TCGA_TCGA" "TCGA" -c #3 
+    | sed "-0[1-9][A-Z].*+" "" -c #3 
+    | where #3 in ('${Subjectid.val}') 
+    | select 2;  
+      
+    
+    create #variants# = nor [grid: '${GOR_grid.val}'] 
+    | select 1-4,gene_symbol,tumor_depth_hq,tumor_reads_hq,VEP_Max_Consequence 
+    | calc start Pos-300 
+    | calc end Pos+300 
+    | columnsort chrom,startx,end;
+    
+    create #pileups# = pgor [#variants#]
+    | join -segsnp <(gor source/bam/rna_bam_tumor.gord -ff [#samples#]) -l 
+    | where (endx <= (Pos+200) and Posx>=(Pos-200)) 
+    | replace startx Posx
+    | rename startx Pos
+    | replace end endx
+    | hide endx
+    | select 1,2,End,QName,Flag,MapQ,Cigar,MD,MRNM,MPOS,ISIZE,SEQ,QUAL,TAG_VALUES,Source 
+
+    | pileup 
+    | select 1-5,Depth,Adepth,Cdepth,Gdepth,Tdepth;   
+      
+    pgor [#variants#] 
+    | join -segsnp [#pileups#] -l 
+    | distinct 
+    | hide MajorAllele,SecondAllele 
+    | where (Pos=Posx) or (Posx='') 
+    | group 1 -gc 1- -ic Depth,Adepth,Cdepth,Gdepth,Tdepth -sum 
+    | rename sum_(.*) ${ren}
+    | calc CallDepth INT(if(Call="A",Adepth,if(Call="C",Cdepth,if(Call="G",Gdepth,Tdepth)))) 
+    | calc RNA_callratio float(Calldepth/Depth) 
+    | calc DNA_callratio float(tumor_reads_hq/tumor_depth_hq) 
+    | calc Status if(DNA_CallRatio>RNA_CallRatio,"Lower",if(DNA_CallRatio<RNA_CallRatio,"Higher","RNA not expressed at this position")) 
+    | replace startx Pos 
+    | columnsort chrom,pos,Reference,Call,Gene_symbol,Depth,Adepth,Cdepth,Gdepth,Tdepth,Calldepth,tumor_depth_hq,tumor_reads_hq,DNA_CallRatio,RNA_CallRatio,Status 
+    | replace Depth if(Depth='','0',Depth) 
+    | replace Status if(RNA_callratio = 0,"Mutation not transcribed",Status) 
+    | calc pvalue PVAL(tumor_reads_hq,tumor_depth_hq,CallDepth,Depth) 
+    | replace pvalue EFORM(pvalue, 1,4) 
+    | replace pvalue if(Depth=0 and CallDepth=0,"NA",pvalue) 
+    | hide Chromx,Posx,startx,startxx,distance,RefBase,end 
+    | select 1,2,Reference,Call,Gene_symbol,Depth,Adepth,Cdepth,Gdepth,Tdepth,CallDepth,tumor_depth_hq,tumor_reads_hq,DNA_callratio,RNA_callratio,VEP_max_consequence,pvalue,Status
+
+  arguments:
+   - name: GOR_grid
+     optional: no
+     type: gor_grid
+     required_columns: ["PN"]
+     default: ""
+     description: "Select samples / subjects using an open containing  a 'PN' column.  If the selected samples do not contain CNVs e.g., _GL samples, they will be omitted."
+
+   - name: Subjectid
+     optional: no
+     type: pn_lists_entries
+     values_path: user_data/IDs.rep
+     single_selection: yes
+     required_columns: ["PN"]
+     default: ""
+     description: "Select samples / subjects using an open containing  a 'PN' column.  If the selected samples do not contain CNVs e.g., _GL samples, they will be omitted."
+   
+     
+  perspectives:
+   - name: "Higher"
+     description: 
+     group: "ALL"
+     default: no
+     filter: DNA_CallRatio < RNA_CallRatio
+     initial_columns: ["Chrom","Pos","Reference","Call","Gene_symbol","Depth","Adepth","Cdepth","Gdepth","Tdepth","Calldepth","tumor_depth_hq","tumor_reads_hq","DNA_CallRatio","RNA_CallRatio","pvalue","VEP_Max_Consequence","VEP_Max_Impact"]
+
+   - name: "Lower"
+     description: The original sex input is not correct
+     group: "ALL"
+     default: no
+     filter: DNA_CallRatio > RNA_CallRatio and Depth != 0
+     initial_columns: ["Chrom","Pos","Reference","Call","Gene_symbol","Depth","Adepth","Cdepth","Gdepth","Tdepth","Calldepth","tumor_depth_hq","tumor_reads_hq","DNA_CallRatio","RNA_CallRatio","pvalue","VEP_Max_Consequence","VEP_Max_Impact"]
+     
+     
+   - name: "Position not expressed"
+     description: The original sex input is not corret
+     group: "ALL"
+     default: no
+     filter: RNA_callratio = ''
+     initial_columns: ["Chrom","Pos","Reference","Call","Gene_symbol","Depth","Adepth","Cdepth","Gdepth","Tdepth","Calldepth","tumor_depth_hq","tumor_reads_hq","DNA_CallRatio","RNA_CallRatio","pvalue","VEP_Max_Consequence","VEP_Max_Impact"]
+
+   - name: "Mutation not transcribed"
+     description: The original sex input is not corret
+     group: "ALL"
+     default: yes
+     filter: RNA_callratio = 0 and Depth >0    
+     initial_columns: ["Chrom","Pos","Reference","Call","Gene_symbol","Depth","Adepth","Cdepth","Gdepth","Tdepth","Calldepth","tumor_depth_hq","tumor_reads_hq","DNA_CallRatio","RNA_CallRatio","VEP_Max_Consequence","VEP_Max_Impact"]
