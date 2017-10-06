@@ -1,0 +1,458 @@
+TumorMutationAnalysis:
+  Version_info: 2.0 <#-- Version 2.1 April.2017  dialog vep_85-->
+  dialog_group: Cancer
+  image_color: red
+  list_description: Tumor analysis for somatic variations in cancer.
+  description: |
+   <div style="margin:10px,10px,10px,0px;"><font face="Arial, sans-serif" size = "4"><p style="margin:0px;padding:0px;"><font size="4.5">This cancer variant dialog shows variation calls from Mutect and Varscan2 along with cancer specific annotations.</font></p>
+   <a style="color:#0b68b2;"><b>Required parameters:</b></a><br><br><table style="border-spacing:10"><tr><td><span style="color:#00aeef">SUBJECTS </span> </td><td> Select an samples / subjects.</td></tr><tr><td><span style="color:#00aeef">SUBJECTS_grid </span> </td><td> Or select an samples / subjects using a grid. This is useful if the sample names are different in cancer_varcalls.gord.</td></tr> 
+   <tr><td><span style="color:#00aeef">VEP_max_consequence </span> </td><td> Select an variant VEP annotations to include in the results.</td></tr><tr><td><span style="color:#00aeef">maxAf </span> </td><td>Germline population allele frequency (Icelandic data, 1000 Genome, Exome Variant server) filter. This is used to exclude common variants that are likely to be germline mutations.</td></tr></table>
+   <a style="color:#0b68b2;"><b><font size="4">Optional parameters:</font></b></a><table style="border-spacing:10"> <tr><td><span style="color:#00aeef">variantScope </span></td><td> Filter to only include exonic and nearby variants or report all variants.</td></tr> <tr><td><span style="color:#00aeef">geneOverlapFuzzfactor </span></td><td> Sets the cutoff distance for 'exonic' variants (used to include splice site variants).</td></tr> <tr><td><span style="color:#00aeef">candidategenereportgrid </span></td><td> Sets a perspective that is limited to genes in the candidate gene table or grid.</td></tr> <tr><td><span style="color:#00aeef">candidategenereportfile </span></td><td> Sets a perspective that is limited to genes in the candidate gene file.</td></tr> <tr><td><span style="color:#00aeef">excludeRepeatRegions </span></td><td> Exclude variants in repetitive regions.  These regions tend to have poor alignment and spurious variants.</td></tr> <tr><td><span style="color:#00aeef">repeatOverlapFuzzfactor </span></td><td> Variants close to the defined repetitive element boundaries are often spurious as the element edges are not well defined.</td></tr> </table>
+   <a style="color:#0b68b2;"><b>Drill in Reports:</b></a><br><br>
+   <a style="color:#00aeef;"><b>Pan-Cancer signif. mutated genes (SMGs) / Separate-tumor SMGs</b></a><br>
+   TCGA significantly mutated genes (SMGs) from <a href="http://www.nature.com/nature/journal/v502/n7471/full/nature12634.html">Kandoth et. al., 2013</a>.  The values are the percentage of samples mutated in individual tumour types (SEP) and Pan-Cancer (PAN).<br>
+   <a style="color:#00aeef;"><b>TCGA tumor signatures</b></a><br>
+   Oncogenic signatures from <a href="http://www.nature.com/ng/journal/v45/n10/full/ng.2762.html">Ciriello et. al., 2013</a>. 17 recurrent mutation (M class) signature subclasses (M1–M17) and 14 copy number alteration (C class) signature subclasses (C1–C14).  The class numbers give the percent of tumors in the subclass that have the TCGA event (mutation, CNV, or methylation).  Cancer reference file class_case lists the samples in the subclass and case_sample_type shows the type of cancer.<br>
+   <a style="color:#00aeef;"><b>NCI 60 cell lines</b></a><br>
+   NCI 60 cell line exome variant calls from <a href="http://cancerres.aacrjournals.org/content/73/14/4372.long">Abaan et. al., 2013</a>.  Values give the variant read depth.
+   </div>
+  query: |
+    <#setting locale="en_US">
+
+
+    <#if SUBJECTs_grid.val??>
+      create #pns# = nor [grid: '${SUBJECTs_grid.val}'] | select col2*,pn* | rename col2*,pn* pn | select pn
+      | sort genome | distinct; ${br} ${br}
+    </#if>
+
+    <#macro SUBJECTS_select>
+    <#if SUBJECTS.val != "NONE" && SUBJECTS.val != ""> -f ${SUBJECTS.val}
+    <#else>
+      <#if SUBJECTs_grid.val??> -ff [#pns#] </#if>
+    </#if>
+    </#macro>
+    
+    <#macro FreqFilter>
+    <#if maxAf.val??> | where isfloat(max_Af) and float(max_Af) <= ${maxAf.val} </#if>
+    </#macro>
+    <#macro VepFilter>
+    <#if VEP_max_consequence.val??> | where ${VEP_max_consequence.val} </#if>
+    </#macro>
+    
+    <#assign fuzzdist = geneOverlapFuzzfactor.val >
+    <#assign ensgenes_map_file = "#gmap#" >
+    
+    <#assign knownvars = "#clinicalvars# | select 1-Alt,Disease,MaxClinImpact,DbSource | rename Disease var_diseases">
+    
+    <#assign MaxClinImpactCondition = "MaxClinImpact = 'Pathogenic'">
+ 
+
+    <#assign theCandidategenereportfile = "" >
+    <#if candidategenereportfile.val?? &&  candidategenereportfile.val!= "">
+      <#assign theCandidategenereportfile = candidategenereportfile.val>
+    <#else>
+       <#if candidategenereportgrid.val?? >
+         <#assign theCandidategenereportfile = "<(nor [grid: '${candidategenereportgrid.val}'] | select gene_symbol) | sort genome | distinct" >
+       </#if>
+    </#if>
+
+
+    <#macro CalcCategories usecontrols>
+     <#if usecontrols == "true" && (allmalecontrols != "" || allfemalecontrols != "") >
+      calc Cat4 IF(homCTRLs > ${CtrlDelta.val} or max_Af >= ${maxAf.val},1,0)
+      <#else>
+      calc Cat4 IF(max_Af >= ${maxAf.val},1,0)
+      </#if>
+      | calc Cat1 IF(Cat4 = 0 and KNOWN_set_MaxClinImpact != '' ,1,0)
+      | calc Cat2 IF(Cat4 = 0 and Cat1=0 and max_impact = 'HIGH',1,0)
+      | calc Cat3A IF(Cat4 = 0 and Cat1=0 and Cat2=0 and (max_consequence = 'missense_variant' and max_score >= 0.9),1,0)
+      | calc Cat3B IF(Cat4 = 0 and Cat1=0 and Cat2=0 and Cat3A=0 and (max_impact = 'LOW' or (max_impact = 'MODERATE' and Cat3A = 0)),1,0)
+      | calc Cat IF(Cat1>0,'Cat1',IF(Cat2>0,'Cat2',IF(Cat3A>0,'Cat3A',IF(Cat3B>0,'Cat3B','Cat4'))))
+      | replace Cat4 IF(Cat = 'Cat4',1,0)
+    </#macro>
+    
+    create #tumor_vars# = pgor source/var/cancer_varcalls.gord -s PN <@SUBJECTS_select /> -fs;
+
+    /* Added the following to calculate max_score. This column is missing in vep85 */
+    create ##maxscore## = pgor ref/dbnsfp_max.gorz 
+    | varjoin -i <(gor source/anno/vep_v85/vep_multi_wgs.gord    -fs -f 'transcript_ablation','splice_acceptor_variant','splice_donor_variant','stop_gained','frameshift_variant','stop_lost','start_lost','transcript_amplification','inframe_insertion','inframe_deletion','missense_variant','protein_altering_variant','splice_region_variant','incomplete_terminal_codon_variant' ) 
+    | calc Max_Score max(max(if(isfloat(Polyphen2_HDIV_score),Polyphen2_HDIV_score,0),if(isfloat(Polyphen2_HVAR_score),Polyphen2_HVAR_score,0)),if(isfloat(Sift_score),Sift_score,0)) 
+    | group 1 -gc #3,#4 -max -fc max_score 
+    | rename max_max_score Max_Score; 
+    
+    create #cosmic# = pgor [#tumor_vars#] | varjoin -r ref/cosmic.gorz | select 1,2,reference,call,ID,CNT-
+    | replace CNT if(CNT='.','1',CNT) | replace primarysites if(primarysites='.','',primarysites)
+    | group 1 -gc reference,call -sc ID,primarysites -ic CNT -lis -len 1000 -sum
+    | hide lis_CNT | split lis_primarysites | distinct
+    | group 1 -gc reference,call,lis_ID,sum_CNT -sc lis_primarysites -lis -len 1000 -count
+    | rename lis_ID COSMIC_IDs | rename sum_CNT COSMIC_count_vars | rename allCount COSMIC_pscount
+    | rename lis_lis_primarysites COSMIC_primarysites | replace COSMIC_primarysites listsortasc(COSMIC_primarysites); ${br} ${br}
+    
+    create #actiongenes# = pgor #genes# | map ref/ensgenes/ensgenes.map -c gene_symbol -n gene_aliases -m ''
+    | split gene_aliases | map ref/cancer/actionable_onco_genes.txt -c gene_aliases -m ''
+    | rename mVal Action_Description | select 1-4,Action_Description | distinct
+    | group 1 -gc gene_end,gene_symbol -set -sc Action_Description | rename set_Action_Description Action_FDA
+    | replace Action_FDA listfilter(Action_FDA,'len(x)>1'); ${br} ${br}
+    
+    create #aVep# = pgor source/anno/vep_v85/vep_single_wgs.gord 
+    | varjoin -r -l -e 0.0 <(gor ref/freq_max.gorz | select 1-5)
+    | varmerge reference call
+    | rownum | rank 1 rownum -gc reference,call,gene_symbol -o desc | where rank_rownum = 1 | hide rownum,rank_rownum
+    
+    /* Added the following to calculate max_score. This column is missing in vep85 */
+    | varjoin -l -e 0.0 -r [##maxscore##]
+    | varjoin -l -r <(gor ${knownvars}) ; ${br} ${br}
+
+    
+    create #COSMIC_gene# = pgor #exons# | segproj -gc gene_symbol | join -segvar -f 2 ref/cosmic.gorz
+    | select 1,POS,gene_symbol,ID,CNT,primarysites,pscount | sort genome | distinct
+    | replace primarysites if(primarysites = '.','',primarysites)
+    | replace CNT if(CNT='.',1,CNT)
+    | granno chrom -gc gene_symbol -ic CNT,pscount -count -sum
+    | rename sum_CNT COSMIC_count_varsInGene
+    | rename allCount COSMIC_count_lociInGene
+    | split primarysites
+    | replace POS 1
+    | select 1,2,gene_symbol,COSMIC_count_varsInGene,COSMIC_count_lociInGene,primarysites
+    | where primarysites != ''
+    | distinct | sort chrom -c primarysites
+    | group chrom -gc gene_symbol -sc primarysites -set -count -ic COSMIC_count_varsInGene,COSMIC_count_lociInGene -len 1000
+    | calc COSMIC_primarysitesInGene listsortasc(set_primarysites)
+    | rename allCount COSMIC_count_primarysitesInGene
+    | rename set_COSMIC_count_varsInGene COSMIC_count_varsInGene
+    | rename set_COSMIC_count_lociInGene COSMIC_count_lociInGene
+    | select 1,2,gene_symbol,COSMIC_count_varsInGene,COSMIC_count_lociInGene,COSMIC_count_primarysitesInGene,COSMIC_primarysitesInGene;
+    
+    create #cancergenes# = pgor #genes# | map ref/cancer/cancer_commercial.map -c gene_symbol -h -m ''
+    | rename genelist Gene_lists | rename genelist_count Gene_listcount | join -segseg -xl gene_symbol -xr gene_symbol -r -l <(ref/cancer/cancer_genes_somatic.gorz
+    | where  In_cancer_gene_census = 'yes' | select 1-3,gene_symbol | calc gc '1')
+    | replace Gene_lists IF(gc='1',IF(Gene_lists='','cancer_gene_census',Gene_lists+',cancer_gene_census'),Gene_lists)
+    | replace gene_listcount IF(gc='1',IF(gene_listcount='',1,str(int(gene_listcount)+1)),gene_listcount) | hide gene_symbolx,gc
+    | multimap ref/cancer/action_info.map -c gene_symbol -h -m '' | prefix Actionable* Gene
+    | calc Annotation_Gene GeneSummary | hide GeneSummary
+
+    | map -c gene_symbol -m '' <(nor [#COSMIC_gene#] | select gene_symbol-) -n COSMIC_count_varsInGene,COSMIC_count_lociInGene,COSMIC_count_primarysitesInGene,COSMIC_primarysitesInGene
+    | replace Gene_ActionablePathways LISTFILTER(Gene_ActionablePathways,'x != "" and x != "."')
+    | where gene_listcount > 0 or Gene_ActionablePathways != '' or COSMIC_count_varsInGene > 0
+    | calc Drug_Gene_ApprovalStatus if(FDAapprovedDrugs='','',LISTMAP(FDAapprovedDrugs,'\"FDA Approved\"'))
+    | rename FDAapprovedDrugs Drug_Gene;
+
+
+    create #pathway_drugs# = nor -h ref/cancer/action_info.map
+    | calc Pathway LISTFILTER(ActionablePathways,'x != "" and x != "."') | select Gene_Symbol,Pathway
+    | split Pathway | map -c Pathway -n Drug,Drug_Mechanism_of_Action,Drug_ApprovalStatus -m ''
+    <(nor -h ref/cancer/drug_list.map | where Pathway != ''
+    | select Pathway,Drug,Drug_Mechanism_of_Action,Drug_ApprovalStatus
+    | replace Drug_ApprovalStatus if(Drug_ApprovalStatus='','Not approved',Drug_ApprovalStatus))
+    | where Drug != '' | distinct
+    | split Drug,Drug_ApprovalStatus
+    | group 1 -gc Gene_symbol -sc Pathway,Drug,Drug_Mechanism_of_Action,Drug_ApprovalStatus -lis -len 5000
+    | rename lis_Drug, Drug_Pathway
+    | rename lis_Pathway, Drug_SourcePathway
+    | rename lis_Drug_Mechanism_of_Action Drug_Mechanism_of_Action
+    | rename lis_Drug_ApprovalStatus Drug_Pathway_ApprovalStatus;
+
+
+    create #semifinal# = pgor [#tumor_vars#]
+        
+    <#if variantScope.val == "exonic only">
+    | join -varseg -f ${fuzzdist} -i #exons#  
+    </#if>
+    <#if excludeRepeatRegions.val == "yes">
+    | join -varseg -n <#if repeatOverlapFuzzfactor.val??> -f ${repeatOverlapFuzzfactor.val} </#if> #repeat_regions#
+    </#if>
+    | varjoin -r <([#aVep#] <@FreqFilter /> <@VepFilter /> )
+    | varjoin -l -r -rprefix KNOWN <(gor ${knownvars} | where ${MaxClinImpactCondition} | group 1 -gc 3,4 -set -sc MaxClinImpact)
+    | <@CalcCategories "false" />
+    | hide Known_set_MaxClinImpact,Cat1,Cat2,Cat3a,Cat3b,Cat4 | rename Cat DIAG_ACMGcat
+    | prefix max_Impact-Refgene VEP | rename max_af VEP_Max_Af | rename VEP_gene_symbol Gene_symbol
+    | calc caller_both IF(varscan2_somatic_status = 'Somatic' and mutect_judgement = 'KEEP',1,0)
+    | calc caller_either IF(varscan2_somatic_status = 'Somatic' or mutect_judgement = 'KEEP',1,0)
+    | join -varseg -xl gene_symbol -xr gene_symbol -l -r [#cancergenes#]
+    | varjoin -r -l [#cosmic#]
+    | calc VennA_InMutect IF(mutect_judgement = 'KEEP',1,0)
+    | calc VennA_InVarscan IF(varscan2_somatic_status IN ('Somatic','LOH'),1,0)
+    | calc VennA_VarscanHC IF(varscan2_highConf = 1,1,0)
+    | calc VennB_WithPrimeSite IF(len(COSMIC_primarysites)>1,1,0)
+    | calc VennB_InGenelist IF(Gene_lists != '',1,0) | hide Gene_symbolx
+    | varjoin -l -r -rprefix dbNSFP <(#dbNSFP# | select 1-4,Interpro_domain | where (Interpro_domain != '.' and Interpro_domain != '') | distinct) ; ${br} ${br}  
+    
+    create #positions# = pgor [#semifinal#]
+    | select 1-4,VEP_Amino_Acids,gene_symbol
+    | where not (VEP_Amino_Acids = '.')
+    | select 1-4,gene_symbol
+    | varjoin -rprefix VEP <(gor #VEPall# | merge #VEPref#)
+    | where not (VEP_Amino_Acids = '.')
+    | colsplit VEP_Amino_Acids 2 aa -s '/'
+    | calc position 'p.'+aa_1+VEP_Protein_Position+aa_2
+    | calc HGVSp VEP_ENSP+':'+position
+    | map -c gene_symbol -n COSMIC_transcript -m '' <(nor -h ref/cancer/COSMIC_preferred_transcript.mmap)
+    | split transcript_stable_id
+    | rename transcript_stable_id COSMIC_transcript
+    | calc COSMIC_HGVSp if(VEP_Feature = COSMIC_transcript, HGVSp,if(CONTAINS(VEP_Feature,if(POSOF(COSMIC_transcript,'.')<0,'nomatch',LEFT(COSMIC_transcript,POSOF(COSMIC_transcript,'.')))),HGVSp, ''))
+    | select 1-4,position,HGVSp,COSMIC_HGVSp
+    | distinct
+    | group 1 -gc 1-4 -sc 5,6,7 -lis -len 2000
+    | hide chromx,posx
+    | calc COSMIC_HGVSp LISTFILTER(lis_COSMIC_HGVSp,'x != \"\"') | hide lis_COSMIC_HGVSp;
+    
+    pgor [#semifinal#] 
+    | varjoin -l [#positions#] 
+    | hide posx,referencex,callx 
+    | rename lis_position VEP_HGVSp_simple 
+    | rename lis_HGVSp VEP_HGVSp | calc CallRatio FORM(if(tumor_depth_hq = 0,0.0,(tumor_reads_hq/float(tumor_depth_hq))),1,3) | distinct 
+    | join -varseg -l -f 2 -r -xl gene_symbol -xr gene_symbol <(gor #genes# | map #gmap# -c gene_symbol -m ? -n GENE_Aliases,OMIM_IDs,OMIM_Descriptions,GENE_Paralogs,GO_IDs,GO_Descriptions) 
+    | hide gene_symbolx 
+    | join -varseg -l -f 2 -r -rprefix KNOWN -xl GENE_symbol -xr GENE_SYMBOL <(#clinicalgenes# | hide MaxClinImpact) 
+    | hide KNOWN_GENE_SYMBOL 
+    | varjoin -r -l -rprefix COMM <(gor #varcomments# 
+    | select 1-4,CLINICAL_SIGNIFICANCE,MODE_OF_INHERITANCE,TEXT 
+    | group 1 -gc 3,4 -set -sc 5- 
+    | rename set_CLINICAL_SIGNIFICANCE CLINICAL_SIGNIFICANCE 
+    | rename set_MODE_OF_INHERITANCE MODE_OF_INHERITANCE 
+    | rename set_TEXT TEXT 
+    | replace CLINICAL_SIGNIFICANCE listfilter(CLINICAL_SIGNIFICANCE,'len(x)>0') 
+    | replace MODE_OF_INHERITANCE listfilter(MODE_OF_INHERITANCE,'len(x)>0') 
+    | replace TEXT listfilter(TEXT,'len(x)>0') ) 
+    | calc candidate_gene 0 
+
+    /* Add pathway genes */ 
+    | map -c gene_symbol -m '' <(nor [#pathway_drugs#]) -n Drug_Pathway,Drug_Mechanism_of_Action,Drug_Pathway_ApprovalStatus,Drug_SourcePathway 
+    | calc Pval_hq PVAL(tumor_reads_hq,tumor_depth_hq,10,10) 
+    | calc Pval_all PVAL(tumor_reads_all,tumor_depth_all,10,10) 
+    | calc ReadDiff if(tumor_depth_hq = 0,0.0,(tumor_reads_hq/float(tumor_depth_hq))) - if(isint(germ_depth_hq) or germ_depth_hq > 0,(int(germ_reads_hq)/ float(germ_depth_hq)),0.0) 
+    
+    | rename #1 Chrom 
+    | rename #3 Reference 
+    | rename #4 Call 
+    
+    /* the renames were added as a workaround*/
+    | rename max_score VEP_max_score
+    | rename dbSource KNOWN_dbSource
+    | rename MaxClinImpact KNOWN_MaxClinImpact
+    | rename var_diseases KNOWN_var_diseases
+    | rename max_consequence VEP_max_consequence 
+    | select 1,2,Reference,Call,PN,Gene_symbol,CallRatio,ReadDiff,Pval_hq,Pval_all,COSMIC_HGVSp,Annotation_Gene,Drug_Gene,Drug_Gene_ApprovalStatus,Drug_Pathway,Drug_Pathway_ApprovalStatus,Drug_SourcePathway,Drug_Mechanism_of_Action,Gene_ActionableDrugClasses,Gene_ActionablePathways,Gene_ActionableTumors,ResistancexSensitivity_Variants,Gene_ActionableMutations,caller_both,caller_either,mutect_judgement,mutect_failure_reasons,varscan2_somatic_status,varscan2_HighConf,varscan2_somatic_p_value,varscan2_variant_p_value,COMM_CLINICAL_SIGNIFICANCE,COMM_MODE_OF_INHERITANCE,COMM_TEXT,COSMIC_IDs,COSMIC_count_vars,COSMIC_pscount,COSMIC_primarysites,COSMIC_count_varsInGene,COSMIC_count_lociInGene,COSMIC_count_primarysitesInGene,COSMIC_primarysitesInGene,dbNSFP_Interpro_domain,DIAG_ACMGcat,GENE_Aliases,Gene_listcount,Gene_lists,GENE_Paralogs,tumor_depth_all,tumor_depth_hq,tumor_reads_all,tumor_reads_hq,germ_depth_all,germ_depth_hq,germ_reads_all,germ_reads_hq,GO_Descriptions,GO_IDs,KNOWN_dbSource,KNOWN_Gene_diseases,KNOWN_lis_dbSourceMaxClinImpact,KNOWN_lis_disease,KNOWN_MaxClinImpact,KNOWN_var_diseases,OMIM_Descriptions,OMIM_IDs,VennA_InMutect,VennA_InVarscan,VennA_VarscanHC,VennB_InGenelist,VennB_WithPrimeSite,candidate_gene,VEP_Amino_Acids,VEP_Biotype,VEP_CDS_position,VEP_HGVSp,VEP_HGVSp_simple,VEP_Max_Af,VEP_Max_Impact,VEP_max_consequence,VEP_Max_Score,VEP_Protein_Position,VEP_Refgene,VEP_Transcript_count
+    
+  arguments:
+   - name: SUBJECTS
+     optional: yes
+     type: pn_lists_entries
+     values_path: SubjectReports/All.rep.link
+     format:
+       keywords: "%s"
+       values: "%s"
+       empty: "NONE"
+     description: "Select tumor samples / subjects.  If selected samples do not contain tumor variants, they will be omitted."
+   - name: SUBJECTs_grid
+     optional: yes
+     type: grid
+     required_columns: ["PN"]
+     default: ""
+     description: "Select samples / subjects using a grid with a 'PN' column.  If selected samples do not contain tumor variants, they will be omitted."
+   - name: VEP_max_consequence
+     type: string
+     optional: yes
+     default: "transcript_ablation,splice_donor_variant,splice_acceptor_variant,stop_gained,frameshift_variant,stop_lost,start_lost,initiator_codon_variant,inframe_insertion,inframe_deletion,missense_variant,protein_altering_variant,transcript_amplification,splice_region_variant,incomplete_terminal_codon_variant"
+     values_path: VEP_impact
+     format:
+       keywords: contains(max_consequence,%s)
+       values: max_consequence in (%s)
+       empty: 2=2
+     description: "List of VEP maximum consequence annotations include in the results."
+   - name: maxAf
+     optional: yes
+     type: string
+     values: ["0.1","0.05","0.01","0.005","0.002","0.001","0.0005"]
+     default: "0.01"
+     description: "Maximum reported allele frequency (Icelandic data, 1000 Genome, Exome Variant server) filter. This is used to exclude common variants that are likely to be germline mutations."
+   - name: variantScope
+     advanced: yes
+     optional: yes
+     type: string
+     values: ["exonic only","whole genome"]
+     default: "exonic only"
+     description: "Filter to only include exonic and nearby variants or report all variants."
+   - name: geneOverlapFuzzfactor
+     advanced: yes
+     optional: yes
+     type: string
+     values: ["0","2","5","10","20"]
+     default: "2"
+     description: "Sets the cutoff distance for 'exonic' variants (used to include splice site variants)."
+   - name: candidategenereportgrid
+     type: grid
+     default: ""
+     optional: yes
+     required_columns: ["Gene_Symbol"]
+     description: "Sets a perspective that is limited to genes in the candidate gene table or grid."
+   - name: candidategenereportfile
+     optional: yes
+     type: file
+     default: ""
+     description: "Sets a perspective that is limited to genes in the candidate gene file."
+   - name: excludeRepeatRegions
+     advanced: yes
+     optional: yes
+     type: string
+     values: ["no","yes"]
+     default: "yes"
+     description: "Exclude variants in repetitive regions.  These regions tend to have poor alignment and spurious variants."
+   - name: repeatOverlapFuzzfactor
+     advanced: yes
+     optional: yes
+     type: string
+     values: ["0","2","5","10","20"]
+     default: "2"     
+     description: "Variants close to the defined repetitive element boundaries are often spurious as the element edges are not well defined."
+
+  perspectives:
+   - name: "Both callers"
+     group: "ALL"
+     default: no
+     default_view: columns
+     filter: |
+       caller_either = '1' or caller_both = '1'
+     view_template: |
+         <i>${Chrom}:${Pos}</i> &nbsp;  <b><a href="http://www.ncbi.nlm.nih.gov/sites/varvu?gene=${Gene_symbol}">${Gene_symbol}</a></b> &nbsp; &nbsp; ${COSMIC_HGVSp} &nbsp;
+         ${Reference} > ${Call}, ${VEP_Amino_Acids} ${VEP_Protein_Position}, ${VEP_max_consequence}, ${VEP_Max_Impact} impact, AF: ${VEP_Max_Af}, Score: ${VEP_Max_Score} &nbsp; &nbsp;
+         <br> <#if caller_both == "1"><b>Both callers agree</b> &nbsp; &nbsp;
+         <#elseif mutect_judgement == "KEEP"><b>Called by MuTect</b> &nbsp; &nbsp;
+         <#elseif varscan2_somatic_status == "Somatic"><b>Called by Varscan2</b> &nbsp; &nbsp; </#if> 
+
+         Tumor vs germline, reads/depth high quality: &nbsp; ${tumor_reads_hq}/${tumor_depth_hq} &nbsp; vs &nbsp; ${germ_reads_hq}/${germ_depth_hq}, &nbsp all:
+         ${tumor_reads_all}/${tumor_depth_all} &nbsp; vs  &nbsp; ${germ_reads_all}/${germ_depth_all} &nbsp; &nbsp;
+         <#if Drug_Gene?has_content || Drug_Pathway?has_content> <br><b>Drugs:</b> &nbsp; &nbsp; </#if>
+         <#if Drug_Gene?has_content> <br> Gene-specific drug(s): ${Drug_Gene} &nbsp; &nbsp; </#if>
+         <#if Drug_Pathway?has_content> <br> Pathway targeting drug(s): ${Drug_Pathway} (${Drug_SourcePathway}) &nbsp; &nbsp; </#if>
+         <#if COSMIC_count_varsInGene?has_content> <br> <b>COSMIC:</b> &nbsp; &nbsp; </#if>
+         <#if 2 < COSMIC_primarysites?length> Variant tumor sites: ${COSMIC_primarysites}</#if> &nbsp; &nbsp;
+         <#if COSMIC_count_vars?has_content> <br>${COSMIC_count_vars} occurrences of variant (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene)
+         <#elseif COSMIC_count_varsInGene?has_content> <br>this variant not observed (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene) </#if>
+         <#if 2 < KNOWN_var_diseases?length> <br> Var disease: ${KNOWN_var_diseases}, </#if> &nbsp; &nbsp;
+         <#if 2 < COMM_CLINICAL_SIGNIFICANCE?length> <br> Comments: ${COMM_CLINICAL_SIGNIFICANCE}, MOI: ${COMM_MODE_OF_INHERITANCE}, ${COMM_TEXT}</#if> &nbsp; &nbsp;
+     initial_columns: ["Chrom","Pos","Reference","Call","PN","Gene_symbol","CallRatio","VEP_Max_Consequence","COSMIC_HGVSp","COSMIC_IDs","COSMIC_count_vars","COSMIC_pscount","COSMIC_primarysites","COSMIC_count_varsInGene","COSMIC_count_lociInGene","COSMIC_count_primarysitesInGene","COSMIC_primarysitesInGene","dbNSFP_Interpro_domain","Drug_Gene","Drug_Gene_ApprovalStatus","Drug_Pathway","Drug_Pathway_ApprovalStatus","Drug_SourcePathway","Drug_Mechanism_of_Action","Gene_ActionableDrugClasses","Gene_ActionableMutations","Gene_ActionablePathways","Gene_ActionableTumors","GeneSummary","ResistancexSensitivity_Variants","GENE_Aliases","caller_both","caller_either","mutect_judgement","mutect_failure_reasons","varscan2_somatic_status","varscan2_somatic_p_value","varscan2_variant_p_value","VEP_Max_Af","VEP_Max_Impact","VEP_Max_Score","tumor_depth_all","tumor_reads_all","germ_depth_all","germ_reads_all","tumor_depth_hq","tumor_reads_hq","germ_depth_hq","germ_reads_hq"]
+
+   - name: "Cancer genes filtered"
+     group: "ALL"
+     default: no
+     filter: |
+             ((mutect_judgement = 'KEEP' and 
+             (tumor_reads_hq >= 2 and (float(tumor_reads_hq)/tumor_depth_hq) > 0.01)) 
+             or 
+             (varscan2_somatic_status = 'Somatic' and varscan2_somatic_p_value <= 0.001)) and Gene_listcount >= 1
+     view_template: |
+         <i>${Chrom}:${Pos}</i> &nbsp;  <b><a href="http://www.ncbi.nlm.nih.gov/sites/varvu?gene=${Gene_symbol}">${Gene_symbol}</a></b> &nbsp; &nbsp; ${COSMIC_HGVSp} &nbsp;
+         ${Reference} > ${Call}, ${VEP_Amino_Acids} ${VEP_Protein_Position}, ${VEP_max_consequence}, ${VEP_Max_Impact} impact, AF: ${VEP_Max_Af}, Score: ${VEP_Max_Score} &nbsp; &nbsp;
+         <br> <#if caller_both == "1"><b>Both callers agree</b> &nbsp; &nbsp;
+         <#elseif mutect_judgement == "KEEP"><b>Called by MuTect</b> &nbsp; &nbsp;
+         <#elseif varscan2_somatic_status == "Somatic"><b>Called by Varscan2</b> &nbsp; &nbsp; </#if> 
+         Tumor vs germline, reads/depth high quality: &nbsp; ${tumor_reads_hq}/${tumor_depth_hq} &nbsp; vs &nbsp; ${germ_reads_hq}/${germ_depth_hq}, &nbsp all:
+         ${tumor_reads_all}/${tumor_depth_all} &nbsp; vs  &nbsp; ${germ_reads_all}/${germ_depth_all} &nbsp; &nbsp;
+         <#if Drug_Gene?has_content || Drug_Pathway?has_content> <br><b>Drugs:</b> &nbsp; &nbsp; </#if>
+         <#if Drug_Gene?has_content> <br> Gene-specific drug(s): ${Drug_Gene} &nbsp; &nbsp; </#if>
+         <#if Drug_Pathway?has_content> <br> Pathway targeting drug(s): ${Drug_Pathway} (${Drug_SourcePathway}) &nbsp; &nbsp; </#if>
+         <#if COSMIC_count_varsInGene?has_content> <br> <b>COSMIC:</b> &nbsp; &nbsp; </#if>
+         <#if 2 < COSMIC_primarysites?length> Variant tumor sites: ${COSMIC_primarysites}</#if> &nbsp; &nbsp;
+         <#if COSMIC_count_vars?has_content> <br>${COSMIC_count_vars} occurrences of variant (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene)
+         <#elseif COSMIC_count_varsInGene?has_content> <br>this variant not observed (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene) </#if>
+         <#if 2 < KNOWN_var_diseases?length> <br> Var disease: ${KNOWN_var_diseases}, </#if> &nbsp; &nbsp;
+         <#if 2 < COMM_CLINICAL_SIGNIFICANCE?length> <br> Comments: ${COMM_CLINICAL_SIGNIFICANCE}, MOI: ${COMM_MODE_OF_INHERITANCE}, ${COMM_TEXT}</#if> &nbsp; &nbsp;
+     initial_columns: ["Chrom","Pos","Reference","Call","PN","Gene_symbol","CallRatio","VEP_Max_Consequence","COSMIC_HGVSp","COSMIC_IDs","COSMIC_count_vars","COSMIC_pscount","COSMIC_primarysites","COSMIC_count_varsInGene","COSMIC_count_lociInGene","COSMIC_count_primarysitesInGene","COSMIC_primarysitesInGene","dbNSFP_Interpro_domain","Drug_Gene","Drug_Gene_ApprovalStatus","Drug_Pathway","Drug_Pathway_ApprovalStatus","Drug_SourcePathway","Drug_Mechanism_of_Action","Gene_ActionableDrugClasses","Gene_ActionableMutations","Gene_ActionablePathways","Gene_ActionableTumors","GeneSummary","GENE_Aliases","caller_both","caller_either","mutect_judgement","mutect_failure_reasons","varscan2_somatic_status","varscan2_somatic_p_value","varscan2_variant_p_value","VEP_Max_Af","VEP_Max_Impact","VEP_Max_Score","tumor_depth_all","tumor_reads_all","germ_depth_all","germ_reads_all","tumor_depth_hq","tumor_reads_hq","germ_depth_hq","germ_reads_hq"]
+
+   - name: "Candidate genes"
+     group: "ALL"
+     default: no
+     filter: |
+             candidate_gene = '1'
+     view_template: |
+         <i>${Chrom}:${Pos}</i> &nbsp;  <b><a href="http://www.ncbi.nlm.nih.gov/sites/varvu?gene=${Gene_symbol}">${Gene_symbol}</a></b> &nbsp; &nbsp; ${COSMIC_HGVSp} &nbsp;
+         ${Reference} > ${Call}, ${VEP_Amino_Acids} ${VEP_Protein_Position}, ${VEP_max_consequence}, ${VEP_Max_Impact} impact, AF: ${VEP_Max_Af}, Score: ${VEP_Max_Score} &nbsp; &nbsp;
+         <br> <#if caller_both == "1"><b>Both callers agree</b> &nbsp; &nbsp;
+         <#elseif mutect_judgement == "KEEP"><b>Called by MuTect</b> &nbsp; &nbsp;
+         <#elseif varscan2_somatic_status == "Somatic"><b>Called by Varscan2</b> &nbsp; &nbsp; </#if> 
+         Tumor vs germline, reads/depth high quality: &nbsp; ${tumor_reads_hq}/${tumor_depth_hq} &nbsp; vs &nbsp; ${germ_reads_hq}/${germ_depth_hq}, &nbsp all:
+         ${tumor_reads_all}/${tumor_depth_all} &nbsp; vs  &nbsp; ${germ_reads_all}/${germ_depth_all} &nbsp; &nbsp;
+         <#if Drug_Gene?has_content || Drug_Pathway?has_content> <br><b>Drugs:</b> &nbsp; &nbsp; </#if>
+         <#if Drug_Gene?has_content> <br> Gene-specific drug(s): ${Drug_Gene} &nbsp; &nbsp; </#if>
+         <#if Drug_Pathway?has_content> <br> Pathway targeting drug(s): ${Drug_Pathway} (${Drug_SourcePathway}) &nbsp; &nbsp; </#if>
+         <#if COSMIC_count_varsInGene?has_content> <br> <b>COSMIC:</b> &nbsp; &nbsp; </#if>
+         <#if 2 < COSMIC_primarysites?length> Variant tumor sites: ${COSMIC_primarysites}</#if> &nbsp; &nbsp;
+         <#if COSMIC_count_vars?has_content> <br>${COSMIC_count_vars} occurrences of variant (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene)
+         <#elseif COSMIC_count_varsInGene?has_content> <br>this variant not observed (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene) </#if>
+         <#if 2 < KNOWN_var_diseases?length> <br> Var disease: ${KNOWN_var_diseases}, </#if> &nbsp; &nbsp;
+         <#if 2 < COMM_CLINICAL_SIGNIFICANCE?length> <br> Comments: ${COMM_CLINICAL_SIGNIFICANCE}, MOI: ${COMM_MODE_OF_INHERITANCE}, ${COMM_TEXT}</#if> &nbsp; &nbsp;
+     initial_columns: ["Chrom","Pos","Reference","Call","PN","Gene_symbol","CallRatio","VEP_Max_Consequence","COSMIC_HGVSp","COSMIC_IDs","COSMIC_count_vars","COSMIC_pscount","COSMIC_primarysites","COSMIC_count_varsInGene","COSMIC_count_lociInGene","COSMIC_count_primarysitesInGene","COSMIC_primarysitesInGene","dbNSFP_Interpro_domain","Drug_Gene","Drug_Gene_ApprovalStatus","Drug_Pathway","Drug_Pathway_ApprovalStatus","Drug_SourcePathway","Drug_Mechanism_of_Action","Gene_ActionableDrugClasses","Gene_ActionableMutations","Gene_ActionablePathways","Gene_ActionableTumors","GeneSummary","GENE_Aliases","caller_both","caller_either","mutect_judgement","mutect_failure_reasons","varscan2_somatic_status","varscan2_somatic_p_value","varscan2_variant_p_value","VEP_Max_Af","VEP_Max_Impact","VEP_Max_Score","tumor_depth_all","tumor_reads_all","germ_depth_all","germ_reads_all","tumor_depth_hq","tumor_reads_hq","germ_depth_hq","germ_reads_hq"]
+   - name: "Filtered"
+     group: "ALL"
+     default: no
+     filter: |
+             ((mutect_judgement = 'KEEP' and 
+             (tumor_reads_hq >= 2 and (float(tumor_reads_hq)/tumor_depth_hq) > 0.01)) 
+             or 
+             (varscan2_somatic_status = 'Somatic' and varscan2_somatic_p_value <= 0.001))
+     view_template: |
+         <i>${Chrom}:${Pos}</i> &nbsp;  <b><a href="http://www.ncbi.nlm.nih.gov/sites/varvu?gene=${Gene_symbol}">${Gene_symbol}</a></b> &nbsp; &nbsp; ${COSMIC_HGVSp} &nbsp;
+         ${Reference} > ${Call}, ${VEP_Amino_Acids} ${VEP_Protein_Position}, ${VEP_max_consequence}, ${VEP_Max_Impact} impact, AF: ${VEP_Max_Af}, Score: ${VEP_Max_Score} &nbsp; &nbsp;
+         <br> <#if caller_both == "1"><b>Both callers agree</b> &nbsp; &nbsp;
+         <#elseif mutect_judgement == "KEEP"><b>Called by MuTect</b> &nbsp; &nbsp;
+         <#elseif varscan2_somatic_status == "Somatic"><b>Called by Varscan2</b> &nbsp; &nbsp; </#if> 
+         Tumor vs germline, reads/depth high quality: &nbsp; ${tumor_reads_hq}/${tumor_depth_hq} &nbsp; vs &nbsp; ${germ_reads_hq}/${germ_depth_hq}, &nbsp all:
+         ${tumor_reads_all}/${tumor_depth_all} &nbsp; vs  &nbsp; ${germ_reads_all}/${germ_depth_all} &nbsp; &nbsp;
+         <#if Drug_Gene?has_content || Drug_Pathway?has_content> <br><b>Drugs:</b> &nbsp; &nbsp; </#if>
+         <#if Drug_Gene?has_content> <br> Gene-specific drug(s): ${Drug_Gene} &nbsp; &nbsp; </#if>
+         <#if Drug_Pathway?has_content> <br> Pathway targeting drug(s): ${Drug_Pathway} (${Drug_SourcePathway}) &nbsp; &nbsp; </#if>
+         <#if COSMIC_count_varsInGene?has_content> <br> <b>COSMIC:</b> &nbsp; &nbsp; </#if>
+         <#if 2 < COSMIC_primarysites?length> Variant tumor sites: ${COSMIC_primarysites}</#if> &nbsp; &nbsp;
+         <#if COSMIC_count_vars?has_content> <br>${COSMIC_count_vars} occurrences of variant (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene)
+         <#elseif COSMIC_count_varsInGene?has_content> <br>this variant not observed (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene) </#if>
+         <#if 2 < KNOWN_var_diseases?length> <br> Var disease: ${KNOWN_var_diseases}, </#if> &nbsp; &nbsp;
+         <#if 2 < COMM_CLINICAL_SIGNIFICANCE?length> <br> Comments: ${COMM_CLINICAL_SIGNIFICANCE}, MOI: ${COMM_MODE_OF_INHERITANCE}, ${COMM_TEXT}</#if> &nbsp; &nbsp;
+
+     initial_columns: ["Chrom","Pos","Reference","Call","PN","Gene_symbol","CallRatio","VEP_Max_Consequence","COSMIC_HGVSp","COSMIC_IDs","COSMIC_count_vars","COSMIC_pscount","COSMIC_primarysites","COSMIC_count_varsInGene","COSMIC_count_lociInGene","COSMIC_count_primarysitesInGene","COSMIC_primarysitesInGene","dbNSFP_Interpro_domain","Drug_Gene","Drug_Gene_ApprovalStatus","Drug_Pathway","Drug_Pathway_ApprovalStatus","Drug_SourcePathway","Drug_Mechanism_of_Action","Gene_ActionableDrugClasses","Gene_ActionableMutations","Gene_ActionablePathways","Gene_ActionableTumors","GeneSummary","GENE_Aliases","caller_both","caller_either","mutect_judgement","mutect_failure_reasons","varscan2_somatic_status","varscan2_somatic_p_value","varscan2_variant_p_value","VEP_Max_Af","VEP_Max_Impact","VEP_Max_Score","tumor_depth_all","tumor_reads_all","germ_depth_all","germ_reads_all","tumor_depth_hq","tumor_reads_hq","germ_depth_hq","germ_reads_hq"]
+   - name: "Pre_vs_PostTreatment"
+     group: "ALL"
+     default: no
+     filter: |
+     view_template: |
+         <i>${Chrom}:${Pos}</i> &nbsp;  <b><a href="http://www.ncbi.nlm.nih.gov/sites/varvu?gene=${Gene_symbol}">${Gene_symbol}</a></b> &nbsp; &nbsp; ${COSMIC_HGVSp} &nbsp;
+         ${Reference} > ${Call}, ${VEP_Amino_Acids} ${VEP_Protein_Position}, ${VEP_max_consequence}, ${VEP_Max_Impact} impact, AF: ${VEP_Max_Af}, Score: ${VEP_Max_Score} &nbsp; &nbsp;
+         <br> <#if caller_both == "1"><b>Both callers agree</b> &nbsp; &nbsp;
+         <#elseif mutect_judgement == "KEEP"><b>Called by MuTect</b> &nbsp; &nbsp;
+         <#elseif varscan2_somatic_status == "Somatic"><b>Called by Varscan2</b> &nbsp; &nbsp; </#if> 
+         Tumor vs germline, reads/depth high quality: &nbsp; ${tumor_reads_hq}/${tumor_depth_hq} &nbsp; vs &nbsp; ${germ_reads_hq}/${germ_depth_hq}, &nbsp all:
+         ${tumor_reads_all}/${tumor_depth_all} &nbsp; vs  &nbsp; ${germ_reads_all}/${germ_depth_all} &nbsp; &nbsp;
+         <#if Drug_Gene?has_content || Drug_Pathway?has_content> <br><b>Drugs:</b> &nbsp; &nbsp; </#if>
+         <#if Drug_Gene?has_content> <br> Gene-specific drug(s): ${Drug_Gene} &nbsp; &nbsp; </#if>
+         <#if Drug_Pathway?has_content> <br> Pathway targeting drug(s): ${Drug_Pathway} (${Drug_SourcePathway}) &nbsp; &nbsp; </#if>
+         <#if COSMIC_count_varsInGene?has_content> <br> <b>COSMIC:</b> &nbsp; &nbsp; </#if>
+         <#if 2 < COSMIC_primarysites?length> Variant tumor sites: ${COSMIC_primarysites}</#if> &nbsp; &nbsp;
+         <#if COSMIC_count_vars?has_content> <br>${COSMIC_count_vars} occurrences of variant (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene)
+         <#elseif COSMIC_count_varsInGene?has_content> <br>this variant not observed (${COSMIC_count_varsInGene} COSMIC variants in ${COSMIC_count_lociInGene} loci in this gene) </#if>
+         <#if 2 < KNOWN_var_diseases?length> <br> Var disease: ${KNOWN_var_diseases}, </#if> &nbsp; &nbsp;
+         <#if 2 < COMM_CLINICAL_SIGNIFICANCE?length> <br> Comments: ${COMM_CLINICAL_SIGNIFICANCE}, MOI: ${COMM_MODE_OF_INHERITANCE}, ${COMM_TEXT}</#if> &nbsp; &nbsp;
+
+     initial_columns: ["Chrom","Pos","Reference","Call","PN","Gene_symbol","ReadDiff","Pval_hq","VEP_Max_Consequence","COSMIC_HGVSp","COSMIC_IDs","COSMIC_count_vars","COSMIC_pscount","COSMIC_primarysites","COSMIC_count_varsInGene","COSMIC_count_lociInGene","COSMIC_count_primarysitesInGene","COSMIC_primarysitesInGene","dbNSFP_Interpro_domain","Drug_Gene","Drug_Gene_ApprovalStatus","Drug_Pathway","Drug_Pathway_ApprovalStatus","Drug_SourcePathway","Drug_Mechanism_of_Action","Gene_ActionableDrugClasses","Gene_ActionableMutations","Gene_ActionablePathways","Gene_ActionableTumors","GeneSummary","GENE_Aliases","caller_both","caller_either","mutect_judgement","mutect_failure_reasons","varscan2_somatic_status","varscan2_somatic_p_value","varscan2_variant_p_value","CallRatio","VEP_Max_Af","VEP_Max_Impact","VEP_Max_Score","tumor_depth_all","tumor_reads_all","germ_depth_all","germ_reads_all","Pval_all","tumor_depth_hq","tumor_reads_hq","germ_depth_hq","germ_reads_hq"]
+
+  drill_in_reports:
+   - name: "Pan-tumor signif. mutated genes (SMGs)"
+     query: |
+         <#setting locale="en_US">
+         select 1,pos,gene_symbol | distinct | map ref/cancer/cancer_pan_smg.map -c gene_symbol -h -m ''
+     required_columns: ["Gene_Symbol"]
+   - name: "Separate-tumor signif. mutated genes (SMGs)"
+     query: |
+         <#setting locale="en_US">
+         select 1,pos,gene_symbol | distinct | multimap ref/cancer/cancer_sep_smg.mmap -c gene_symbol -h -m '' 
+     required_columns: ["Gene_Symbol"]
+   - name: "TCGA_tumor_signatures"
+     query: |
+         <#setting locale="en_US">
+         join -varseg -r -l -rprefix TCGA ref/cancer/cancer_tcga_tumor_signatures.gor
+     required_columns: ["Reference","Call"]
+   - name: "NCI 60 cell lines" 
+     query: |
+         <#setting locale="en_US">
+         select 1-8 | varjoin -l -r ref/DCREF_1-3-1/nci60_detail.gor
+     required_columns: ["Reference","Call"]
+
