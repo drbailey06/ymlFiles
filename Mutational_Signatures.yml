@@ -144,4 +144,3 @@ Mutational_Signatures:
      values: ["Cohort","Individual"]
      description: "Selects the type of analysis you would like to perform: <br><br><b> Cohort </b> analyzes every sample in the grid selected with the gorGrid selector. <br><br><b>Individual </b> analyzes every sample individually providing a signature for each."
    
-/* delete */
