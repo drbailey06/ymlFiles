@@ -187,8 +187,10 @@ TumorMutationAnalysis:
     | calc position 'p.'+aa_1+VEP_Protein_Position+aa_2
     | calc HGVSp VEP_ENSP+':'+position
     | map -c gene_symbol -n COSMIC_transcript -m '' <(nor -h ref/cancer/COSMIC_preferred_transcript.mmap)
+    /*
     | split transcript_stable_id
     | rename transcript_stable_id COSMIC_transcript
+    */
     | calc COSMIC_HGVSp if(VEP_Feature = COSMIC_transcript, HGVSp,if(CONTAINS(VEP_Feature,if(POSOF(COSMIC_transcript,'.')<0,'nomatch',LEFT(COSMIC_transcript,POSOF(COSMIC_transcript,'.')))),HGVSp, ''))
     | select 1-4,position,HGVSp,COSMIC_HGVSp
     | distinct
