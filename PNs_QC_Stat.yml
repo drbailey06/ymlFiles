@@ -1,0 +1,247 @@
+PNs_QCstat_Cancer:
+  Version_info: Version 1.0.0, 7 March 2017
+  Package_version: 0.3.2
+  dialog_group: Cancer
+  image_color: orange
+  list_description: Calculate quality statistics for multiple tumor samples
+  description: |
+   <div style="margin:10px;"><font face="Arial, sans-serif" size = "4">
+    <font size="4.5">Version 1.0.0, 7 March 2017</font><br>
+    <font size="4.5">Package_version: 0.3.2</font><br>
+   <p><font size="4.5">The PN_QCstat report calculates variation statistics for tumor samples.</font></p>
+   <a style="color:#0b68b2;"><b>Required parameters:</b></a><br><br><table style="border-spacing:10"><tr><td><span style="color:#00aeef">SUBJECTS </span> </td><td> Select an samples / subjects.</td></tr><tr><td><span style="color:#00aeef">SUBJECTS_grid </span> </td><td> Or select an samples / subjects using a grid. This is useful if the sample names are different in cancer_varcalls.gord.</td></tr></table>
+   <a style="color:#0b68b2;"><b><font size="4">Optional parameters:</font></b></a><table style="border-spacing:10"><tr><td><span style="color:#00aeef">variantScope </span> </td><td> exonic/ whole genome </td></tr><tr><td><span style="color:#00aeef">Candidategenefile </span> </td><td> gor report list of candidate genes</td></tr><tr><td><span style="color:#00aeef">Regionfile </span> </td><td> a gor segment file (“chrom”, “bpstart”, “bpstop”) to define regions that are to be included or excluded</td></tr><tr><td><span style="color:#00aeef">RegionfileUsage </span> </td><td> select whether the region file should be used to limit analysis</td></tr><tr><td><span style="color:#00aeef">Ovelapfuzzfactor </span> </td><td> number of basepairs to allow in overlap</td></tr><tr><td><span style="color:#00aeef">RefPath </span> </td><td> path to the folder with the reference data</td></tr></table></font><div>
+  query: |
+    <#setting locale="en_US">
+    <#assign numSUBJECTS = SUBJECTS.val?split(",")?size>
+
+    <#if variantScope.val == "exonic only">
+      <#assign gordictionaries = "#wesVars#" >
+      <#assign goodcov_scope = "wes" >
+    <#else>
+      <#assign gordictionaries = "#wgsVars#" >
+      <#assign goodcov_scope = "wgs" >
+    </#if>
+
+    create ##dummy## = gor #genes# | top 1; ${br} ${br}
+
+    def ##ref## = ${RefPath.val}; ${br}
+    <#assign ref = "##ref##" >
+
+    def ##dbsnp## = ${ref}/dbsnp/dbsnp.gorz;  ${br}
+    def ##freqmax## = ${ref}/freq_max.gorz; ${br}
+    def ##ref_exons## = ${ref}/refgenes/refgenes_exons.gorz; ${br}
+    def ##ref_codingexons## = ${ref}/refgenes/refgenes_codingexons.gorz; ${br}
+    def ##ens_exons## = ${ref}/ensgenes/ensgenes_exons.gorz; ${br}
+    def ##ens_codingexons## = ${ref}/ensgenes/ensgenes_codingexons.gorz; ${br} ${br}
+
+    create ##join_exons## = gor ##ref_exons## | merge ##ref_codingexons## | merge ##ens_exons## | merge ##ens_codingexons## | segspan;  ${br} ${br}
+    create  ##theFreqMax## = pgor ##freqmax## | select 1-4,max_af; ${br} ${br}
+
+    <#assign vepfile = "${VEPfile.val}" >
+    def ##VEP## = ${vepfile} <#if variantScope.val == "exonic only">| join -varseg <(gor [##join_exons##]) -i -f 30 </#if>| select 1-4,max_impact,max_consequence | varjoin -r -l -e 0 <(gor [##theFreqMax##]); ${br} ${br}
+
+    <#assign renameval = "#"+"{"+"1"+"}" >
+    <#assign pns = "" >
+
+    <#if SUBJECTs_grid.val??>
+      create #pns# = nor [grid: '${SUBJECTs_grid.val}'] | select col2*,pn* | rename col2*,pn* pn | select pn
+    /* Filter to give only WES and WGS. These samples have the format TCGA_<TCGA-sample1-id>_<TCGA-sample2-id> */
+      | where regsel(PN,'(TCGA-.*TCGA-.*)') != ''
+      | replace PN if (regsel(PN,'(TCGA_TCGA-.*TCGA-.*)') != '',PN,'TCGA_'+PN)
+      | sort -c PN | distinct; ${br} ${br}
+    </#if>
+
+    <#if SUBJECTS.val != "NONE" && SUBJECTS.val != "">
+      <#assign PN_noquotes = "${SUBJECTS.val}"?replace("'","") >
+      create #pns# = nor #genes# | top 1 | calc PN "${PN_noquotes}" | select PN | split PN | where regsel(PN,'(.*TCGA-.*TCGA-.*)') != '' | replace PN 'TCGA_'+PN;
+    </#if>
+
+    <#macro SUBJECTS_select>
+    <#if SUBJECTS.val != "NONE" && SUBJECTS.val != ""> -ff [#pns#]
+    <#else>
+      <#if SUBJECTs_grid.val??> -ff [#pns#] </#if>
+    </#if>
+    </#macro>
+
+    create #tumor_vars# = pgor source/var/cancer_varcalls.gord -s PN <@SUBJECTS_select /> -fs
+    /*
+    | prefix FILTER,INFO,FORMAT,NORMAL,TUMOR mutect2
+    | merge <(gor source/var/cancer/Varscan2.gord -s PN <@SUBJECTS_select /> -fs
+    | prefix FILTER,INFO,FORMAT,NORMAL,TUMOR varscan2 )
+    | group 1 -gc Pos,reference,call,PN -sc mutect2_FILTER-mutect2_TUMOR,varscan2_FILTER-varscan2_TUMOR -ic tumor_reads_all-germ_depth_hq -max -count
+    | rename max_(.*) ${renameval}
+        | columnsort 1,2,reference,call,PN,mutect2_*,varscan2_*,tumor_*,germ_*
+        | calc mutect2_judgement if(mutect2_FILTER = 'PASS','KEEP','REJECT')
+        | sed -c mutect2_FILTER ';' ','
+        | calc mutect2_failure_reasons LISTFILTER(mutect2_FILTER,'x != "PASS"') | hide mutect2_FILTER
+        | calc mutect2_Normal_LOD tag(mutect2_INFO,'NLOD',';')
+        | calc mutect2_Tumor_LOD tag(mutect2_INFO,'TLOD',';')
+        | calc varscan2_somatic_status tag(varscan2_INFO,'SS',';')
+        | replace varscan2_somatic_status if(varscan2_somatic_status=0,'None',if(varscan2_somatic_status=1,'Germline',if(varscan2_somatic_status=2,'Somatic',if(varscan2_somatic_status=3,'LOH',if(varscan2_somatic_status=4,'Post-transcriptional modification',if(varscan2_somatic_status=5,'Unknown',if(varscan2_INFO='','','error')))))))
+        | calc varscan2_variant_p_value tag(varscan2_INFO,'GPV',';')
+        | calc varscan2_somatic_p_value tag(varscan2_INFO,'SPV',';')
+        | calc germ_freq VCFFORMATTAG(varscan2_format,varscan2_NORMAL,'FREQ')
+        | replace germ_freq SUBSTR(germ_freq,0,len(germ_freq)-1)
+        | calc tumor_freq VCFFORMATTAG(varscan2_format,varscan2_TUMOR,'FREQ')
+        | replace tumor_freq SUBSTR(tumor_freq,0,len(tumor_freq)-1)
+        | calc varscan2_HighConf if(varscan2_somatic_p_value < 0.03 and tumor_freq > 15.00 and germ_freq < 5.00,1,0)
+        | hide germ_freq,tumor_freq
+        | calc varscan2_somatic_score tag(varscan2_INFO,'SSC',';')
+        | sed -c mutect2_Normal_LOD- 'NOT_FOUND' ''
+    */    
+    | where (mutect_judgement = 'KEEP' or (varscan2_somatic_status = 'Somatic' and varscan2_somatic_p_value <= 0.001)) and tumor_reads_hq >= 2 and float(tumor_reads_hq)/tumor_depth_hq > 0.01
+    | select 1,2,Reference,Call,PN,tumor_depth_hq,tumor_depth_all;
+    
+    create #cov# = gor [#tumor_vars#]
+    | group genome -gc PN -ic tumor_depth_hq,tumor_depth_all -avg -med
+    | replace avg_tumor_depth_hq form(avg_tumor_depth_hq,2,4)
+    | replace med_tumor_depth_hq form(med_tumor_depth_hq,2,4)
+    | replace avg_tumor_depth_all form(avg_tumor_depth_all,2,4)
+    | replace med_tumor_depth_all form(med_tumor_depth_all,2,4)
+    | calc Mutation_type 'Avg variant depth hq,Median variant depth hq,Avg variant depth,Median variant depth'
+    | calc Mutation_value avg_tumor_depth_hq+','+med_tumor_depth_hq+','+avg_tumor_depth_all+','+med_tumor_depth_all
+    | split Mutation_type,Mutation_value
+    | select 1,2,PN,Mutation_type,Mutation_value;
+
+    create #mutation# = gor [#tumor_vars#]
+    | where len(reference)=1 and len(call)=1
+    | granno genome -gc PN -count
+    | rename allCount SNV_count
+    | calc Mutation_type reference+'>'+call
+    | calc Collapse if(Mutation_type='A>C' or Mutation_type='G>T',1,0)
+    | replace Collapse if(Mutation_type='A>G' or Mutation_type='C>T',2,Collapse)
+    | replace Collapse if(Mutation_type='A>T',3,Collapse)
+    | replace Collapse if(Mutation_type='C>A' or Mutation_type='T>G',4,Collapse)
+    | replace Collapse if(Mutation_type='C>G',5,Collapse)
+    | replace Collapse if(Mutation_type='G>A' or Mutation_type='T>C',6,Collapse)
+    | replace Collapse if(Mutation_type='G>C',7,Collapse) 
+    | replace Collapse if(Mutation_type='T>A',8,Collapse)
+    | group genome -gc PN,Collapse,SNV_count -sc Mutation_type -set -count
+    | rename allCount Mutation_count
+    
+    | calc Mutation_type if(contains(set_Mutation_type,"C>T"),"C>T",if(contains(set_Mutation_type,"C>A"),"C>A",if(contains(set_Mutation_type,"C>G"),"C>G",if(contains(set_Mutation_type,"T>A"),"T>A",if(contains(set_Mutation_type,"T>G"),"T>G",if(contains(set_Mutation_type,"T>C"),"T>C",Mutation_type)
+    
+    | calc Mutation_percent form(Mutation_count/SNV_count*100,2,2)
+    | calc TsTv if(Mutation_type in('A>G','C>T','G>A','T>C'),'Ts','Tv')
+    | calc Analysis 'SNV type';
+ 
+    create #mutation2# = gor [#tumor_vars#]
+    | where len(reference)=1 and len(call)=1
+    | granno genome -gc PN -count
+    | rename allCount SNV_count
+    | calc Mutation_type reference+'>'+call
+    | calc TsTv_type if(Mutation_type in('A>G','C>T','G>A','T>C'),'Ts','Tv')
+    | group genome -gc TsTv_type,PN,SNV_count -count
+    | rename TsTv_type Mutation_type
+    | rename allCount Mutation_count
+    | hide bpStop
+    | calc Mutation_percent form(Mutation_count/SNV_count*100,2,2)
+    | calc TsTv if(Mutation_type='Ts','Ts','Tv')
+    | calc Analysis 'transition transversion Analysis';
+    
+    create #tstv_ratio# = gor [#mutation2#]
+    | calc transition if(Mutation_type='Ts',Mutation_count,0)
+    | calc transversion if(Mutation_type='Tv',Mutation_count,0)
+    | group genome -gc PN -max -ic transition,transversion
+    | calc Ratio form(float(max_transition)/max_transversion,2,4)
+    | hide bpStop,max_*
+    | calc Mutation_type 'TsTv_ratio'
+    | calc Analysis 'transition transversion Analysis';
+ 
+    create #indel# = gor [#tumor_vars#]
+    | granno genome -gc PN -count
+    | rename allCount PN_count
+    | calc Mutation_type if(len(reference) != 1 or len(call) != 1,if(len(reference) > 1,'Deletion','Insertion'),'SNV')
+    | group genome -gc Mutation_type,PN,PN_count -count
+    | rename allCount Mutation_count
+    | hide bpStop
+    | calc Mutation_percent form(Mutation_count/PN_count*100,2,2)
+    | calc Analysis 'SNP vs InDel Analysis';
+
+    create #all_muts# = gor [#indel#] 
+    | group genome -gc PN -ic PN_count -max
+    | rename max_PN_count Mutation_count
+    | calc Mutation_type 'all variants'
+    | calc Analysis 'Variant counts';
+    
+    nor [#cov#] | merge [#mutation#] | merge [#mutation2#] | merge [#tstv_ratio#] | merge [#indel#] | merge [#all_muts#]
+    | select PN,Analysis,Mutation_type,Mutation_count,Mutation_percent,Mutation_value,TsTv,SNV_count,Ratio
+    /*
+    | rename PN PN_WES
+    | map -c PN_WES -m '' -n  PN_WES,SubjectId,TCGA_project,Disease_type,Primary_site,age_at_diagnosis,alcohol_history,alcohol_intensity,bcr_patient_barcode,bmi,cigarettes_per_day,classification_of_tumor,created_datetime,days_to_birth,days_to_death,days_to_last_follow_up,days_to_last_known_disease_status,days_to_recurrence,days_to_treatment,demographic_id,diagnosis_id,ethnicity,exposure_id,gender,height,last_known_disease_status,morphology,primary_diagnosis,prior_malignancy,progression_or_recurrence,race,site_of_resection_or_biopsy,state,therapeutic_agents,tissue_or_organ_of_origin,treatment_id,treatment_intent_type,treatment_or_therapy,tumor_grade,tumor_stage,updated_datetime,vital_status,weight,years_smoked,year_of_birth,year_of_death,Flag_RNASeq_normal,Flag_RNASeq_tumor,Flag_miRNA_normal,Flag_miRNA_tumor,Flag_CNV_normal,Flag_CNV_tumor,Flag_Methyl_normal,Flag_Methyl_tumor <(nor -h user_data/TMA/sampleTags_TMA.all.tsv | replace PN_WES 'TCGA_'+PN_WES)
+    | replace SubjectId- listfirst(#rc)
+    | prefix Disease_type-year_of_birth TCGA
+    */
+  arguments:
+   - name: SUBJECTS
+     optional: yes
+     type: string
+     values_path: SubjectReports/All.rep
+     format:
+       values: "%s"
+       empty: "NONE"
+     description: "Select tumor samples / subjects.  If selected samples do not contain tumor variants, they will be omitted."
+   - name: SUBJECTs_grid
+     optional: yes
+     type: grid
+     required_columns: ["PN|PN_WES"]
+     default: ""
+     description: "Select samples / subjects using a grid with a 'PN' column.  If selected samples do not contain tumor variants, they will be omitted."
+   - name: variantScope
+     optional: yes
+     type: string
+     values: ["exonic only","whole genome"]
+     default: "exonic only"
+   - name: candidategenefile
+     optional: yes
+     type: file
+     default: ""
+   - name: Regionfile
+     optional: yes
+     type: file
+     default: ""
+   - name: RegionfileUsage
+     optional: no
+     type: string
+     default: "include"
+     values: ["exclude","include"]
+   - name: OverlapFuzzfactor
+     optional: yes
+     type: string
+     values: ["0","2","5","10","20"]
+     default: "0"
+   - name: RefPath
+     optional: yes
+     type: string
+     default: "ref"
+   - name: VEPfile
+     optional: yes
+     type: string
+     default: "user_data/TMA/vep.TCGA.single.gord"
+
+  perspectives:
+   - name: "Counts"
+     group: "ALL"
+     default: yes
+     filter: |
+         Mutation_count != ''
+     initial_columns: ["PN","Analysis","Mutation_type","Mutation_count","TCGA_project","Disease_type","SubjectId"]
+   - name: "Percentages"
+     group: "ALL"
+     default: no
+     filter: |
+         Mutation_percent != ''
+     initial_columns: ["PN","Analysis","Mutation_type","Mutation_percent","TCGA_project","Disease_type","SubjectId"]
+   - name: "Ratios"
+     group: "ALL"
+     default: no
+     filter: |
+         Ratio != ''
+     initial_columns: ["PN","Analysis","Mutation_type","Ratio","TCGA_project","Disease_type","SubjectId"]
+   - name: "Calculated value"
+     group: "ALL"
+     default: no
+     filter: |
+         Mutation_value != ''
+     initial_columns: ["PN","Analysis","Mutation_type","Mutation_value","TCGA_project","Disease_type","SubjectId"]
